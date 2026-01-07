@@ -1,36 +1,41 @@
 package handlers
 
 import (
+	"go-authentication-api/initializers"
 	"go-authentication-api/models"
 	"go-authentication-api/utils"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+    "gorm.io/gorm"
 )
 
-// In-memory user store (username -> User)
-var userStore = map[string]models.User{
-	"user": {ID: 1, Username: "user", Password: "password"},
-}
+// In-memory user store removed; using database via GORM
 
 func Login(c *gin.Context) {
-	var inputUser models.User
-
-	// Check user credentials and generate a JWT token
-	if err := c.ShouldBindJSON(&inputUser); err != nil {
+	var input models.User
+	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request payload"})
 		return
 	}
 
-	// Check if credentials are valid
-	storedUser, exists := userStore[inputUser.Username]
-	if !exists || storedUser.Password != inputUser.Password {
+	var user models.User
+	result := initializers.DB.Where("username = ?", input.Username).First(&user)
+	if result.Error != nil {
+		if result.Error == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to query user"})
+		return
+	}
+
+	if !utils.CheckPasswordHash(input.Password, user.Password) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
 		return
 	}
 
-	// Generate a JWT token
-	token, err := utils.GenerateToken(storedUser.ID)
+	token, err := utils.GenerateToken(user.ID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
 		return
@@ -41,24 +46,38 @@ func Login(c *gin.Context) {
 
 // Function for registering a new user
 func Register(c *gin.Context) {
-	var user models.User
+    var input models.User
 
-	if err := c.ShouldBindJSON(&user); err != nil {
+	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request payload"})
 		return
 	}
 
 	// Check if user already exists
-	if _, exists := userStore[user.Username]; exists {
+	var existing models.User
+	if err := initializers.DB.Where("username = ?", input.Username).First(&existing).Error; err == nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "User already exists"})
+		return
+	} else if err != gorm.ErrRecordNotFound {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to check existing user"})
 		return
 	}
 
-	// Assign ID (simple auto-increment simulation)
-	user.ID = uint(len(userStore) + 1)
+	// Hash the password
+	hashedPassword, err := utils.HashPassword(input.Password)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to hash password"})
+		return
+	}
 
-	// Save to store
-	userStore[user.Username] = user
+    newUser := models.User{
+        Username: input.Username,
+        Password: hashedPassword,
+    }
+	if err := initializers.DB.Create(&newUser).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create user"})
+		return
+	}
 
 	c.JSON(http.StatusCreated, gin.H{"message": "User registered successfully"})
 }

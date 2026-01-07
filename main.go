@@ -2,12 +2,19 @@ package main
 
 import (
 	"go-authentication-api/handlers"
+	"go-authentication-api/initializers"
 	"go-authentication-api/middleware"
 	"log"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-)	
+) 
+
+func init() {
+    initializers.LoadEnvVariables()
+    initializers.ConnectToDb()
+    initializers.SyncDatabase()
+}
 
 func main() {
 	app := gin.Default()
@@ -44,4 +51,4 @@ func main() {
 
 	app.Run(":8080")
 	log.Println("Server is running on port 8080")
-}	
+}
